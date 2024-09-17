@@ -1,117 +1,302 @@
-#include <iostream>
-#include <sstream>
+#include <windows.h>
+#include <wbemidl.h>
+#include <comdef.h>
 #include <string>
+#include <iostream>
 #include <cstdlib>
-#include <cstdio>
-#include <regex>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+#include <memory>
+#include <vector>
 
 using namespace std;
 
-const string GREEN = "\033[32m";   // Green
-const string RED = "\033[31m";     // Red
-const string YELLOW = "\033[33m";  // Yellow
-const string RESET = "\033[0m";    // Reset to default color
+// Macro for checking OS type
+#if defined(_WIN32) || defined(_WIN64)
+#define isWindows() true
+#else
+#define isWindows() false
+#endif
 
-void showUsage() {
-    cout << YELLOW << "USAGE SYNTAX: MAC-Changer -i <INTERFACE> -m <MAC_ADDRESS>" << RESET << endl;
+// Struct for storing output to getIWbemClassObjectField()
+struct VariantType {
+    enum Type {
+        VT_BSTR,
+        VT_I4,
+        VT_DISPATCH,
+        VT_I2,
+        VT_NULL,
+        VT_BOOL
+    } type;
+    union {
+        LONG lVal;
+        IDispatch* pdispVal;
+        BSTR bstrVal;
+        SHORT iVal;
+        VARIANT_BOOL boolVal;
+    } value;
+};
+
+// Function prototypes
+const BYTE* generateMACAddress();
+char hexify(int);
+shared_ptr<VariantType> getIWbemClassObjectField(IWbemClassObject*, const wstring&);
+void resetNIC(IWbemServices*, const wstring&);
+void printVariantType(const shared_ptr<VariantType>&);
+string convertBSTRToString(BSTR);
+bool validAddress(const string&);
+void setupWmiApi(IWbemLocator**, IWbemServices**);
+wstring getDeviceId(IWbemLocator*, IWbemServices*, const string&);
+void printUsage(const char*);
+bool parseArguments(int, char*[], string&, string&);
+
+// Helper function to print colored messages
+void printWithColor(const string& message, int colorCode) {
+    // 0 - Reset, 1 - Red, 2 - Green, 3 - Yellow
+    string colorCodes[] = {"\033[0m", "\033[31m", "\033[32m", "\033[33m"};
+    cout << colorCodes[colorCode] << message << colorCodes[0] << endl;
 }
 
-string execCommand(const string& command) {
-    string result;
-    char buffer[128];
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) {
-        cerr << RED << "[!] popen() failed!" << RESET << endl;
-        return result;
+// Function to print usage instructions
+void printUsage(const char* programName) {
+    cout << "[-] USAGE SYNTAX: " << programName << " -r <interface_name> | -s <mac_address>" << endl;
+    cout << "[~] EXPLANATION:" << endl;
+    cout << "[!]  -r <interface_name>  Reset the network interface specified by <interface_name>" << endl;
+    cout << "[!]  -s <mac_address>     Set a new MAC address specified by <mac_address>" << endl;
+    cout << "[!]  <interface_name>      The name of the network interface to reset" << endl;
+    cout << "[!]  <mac_address>         The new MAC address to set in format XX:XX:XX:XX:XX:XX" << endl;
+}
+
+// Function to parse command-line arguments
+bool parseArguments(int argc, char* argv[], string& action, string& value) {
+    if (argc != 3) {
+        return false;
     }
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
+
+    string option(argv[1]);
+    if (option == "-r" || option == "-s") {
+        action = option;
+        value = argv[2];
+        return true;
     }
-    pclose(pipe);
-    return result;
+    return false;
 }
 
-void macChangerLinuxMac(const string& interface, const string& newMAC) {
-    cout << YELLOW << "[+] Changing MAC address for " << interface << " to " << newMAC << RESET << endl;
+// Function to get the device ID
+wstring getDeviceId(IWbemLocator* pLoc, IWbemServices* pSvc, const string& name) {
+    wstring wName(name.begin(), name.end());
+    wstring query = L"SELECT * FROM Win32_NetworkAdapter WHERE Name = \"" + wName + L"\"";
+    _bstr_t langArg(L"WQL");
+    _bstr_t queryArg(query.c_str());
 
-    execCommand("sudo ifconfig " + interface + " down");
-    execCommand("sudo ifconfig " + interface + " hw ether " + newMAC);
-    execCommand("sudo ifconfig " + interface + " up");
-}
+    IEnumWbemClassObject* pEnum = nullptr;
+    HRESULT hr = pSvc->ExecQuery(langArg, queryArg, WBEM_FLAG_FORWARD_ONLY, nullptr, &pEnum);
 
-void macChangerWindows(const string& interface, const string& newMAC) {
-    cout << YELLOW << "[+] Changing MAC address for " << interface << " to " << newMAC << RESET << endl;
+    if (FAILED(hr)) {
+        printWithColor("[-] Unable to retrieve network adapters. Error code = " + to_string(hr), 1);
+        pLoc->Release();
+        pSvc->Release();
+        exit(1);
+    }
 
-    string command = "wmic path win32_networkadapter where (NetConnectionID=\"" + interface + "\") call "
-                     "Enable";
-    execCommand(command);
-    command = "wmic path win32_networkadapter where (NetConnectionID=\"" + interface + "\") call "
-              "Disable";
-    execCommand(command);
-    command = "netsh interface set interface \"" + interface + "\" newname=\"" + newMAC + "\"";
-    execCommand(command);
-}
+    IWbemClassObject* obj = nullptr;
+    ULONG numElm = 0;
+    hr = pEnum->Next(WBEM_INFINITE, 1, &obj, &numElm);
 
-string getCurrMAC(const string& interface) {
-    string result = execCommand("ifconfig " + interface);
-    regex macRegex(R"(\b([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b)");
-    smatch macMatch;
-    if (regex_search(result, macMatch, macRegex)) {
-        return macMatch.str();
+    if (SUCCEEDED(hr) && obj != nullptr) {
+        auto pDeviceID = getIWbemClassObjectField(obj, L"DeviceID");
+        wstring deviceId(pDeviceID->value.bstrVal, SysStringLen(pDeviceID->value.bstrVal));
+        obj->Release();
+        pEnum->Release();
+        return deviceId;
     } else {
-        cerr << RED << "[!] MAC address cannot be read" << RESET << endl;
-        return "";
+        printWithColor("[-] No adapter was found with name \"" + name + "\".", 1);
+        pLoc->Release();
+        pSvc->Release();
+        exit(1);
     }
 }
 
+// Sets up WMI API
+void setupWmiApi(IWbemLocator** ppLoc, IWbemServices** ppSvc) {
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(hr)) {
+        printWithColor("[-] Failed to initialize COM library. Error code = " + to_string(hr), 1);
+        exit(1);
+    }
+
+    hr = CoInitializeSecurity(nullptr, -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_CONNECT, RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE, 0);
+    if (FAILED(hr)) {
+        printWithColor(" [-] Failed to initialize security. Error code = " + to_string(hr), 1);
+        CoUninitialize();
+        exit(1);
+    }
+
+    hr = CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER, IID_IWbemLocator, (LPVOID*)ppLoc);
+    if (FAILED(hr)) {
+        printWithColor("[-] Failed to create IWbemLocator object. Error code = " + to_string(hr), 1);
+        CoUninitialize();
+        exit(1);
+    }
+
+    hr = (*ppLoc)->ConnectServer(_bstr_t(L"ROOT\\CIMV2"), nullptr, nullptr, nullptr, 0, nullptr, nullptr, ppSvc);
+    if (FAILED(hr)) {
+        printWithColor("[-] Unable to connect to ROOT\\CIMV2. Error code = " + to_string(hr), 1);
+        (*ppLoc)->Release();
+        CoUninitialize();
+        exit(1);
+    }
+
+    hr = CoSetProxyBlanket(*ppSvc, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, nullptr, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE);
+    if (FAILED(hr)) {
+        printWithColor("[-] Could not set proxy blanket. Error code = " + to_string(hr), 1);
+        (*ppSvc)->Release();
+        (*ppLoc)->Release();
+        CoUninitialize();
+        exit(1);
+    }
+}
+
+// Validates MAC address
+bool validAddress(const string& mac) {
+    if (mac.length() == 17) {
+        for (size_t i = 0; i < mac.length(); ++i) {
+            if (i % 3 == 2) {
+                if (mac[i] != ':') {
+                    return false;
+                }
+            } else if (!((mac[i] >= '0' && mac[i] <= '9') || (mac[i] >= 'A' && mac[i] <= 'F') || (mac[i] >= 'a' && mac[i] <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+// Converts BSTR to std::string
+string convertBSTRToString(BSTR s) {
+    wstring ws(s, SysStringLen(s));
+    return string(ws.begin(), ws.end());
+}
+
+// Gets specified field of input IWbemClassObject accordingly
+shared_ptr<VariantType> getIWbemClassObjectField(IWbemClassObject* obj, const wstring& field) {
+    VARIANT vRet;
+    VariantInit(&vRet);
+    HRESULT hr = obj->Get(field.c_str(), 0, &vRet, nullptr, nullptr);
+    
+    if (FAILED(hr)) {
+        printWithColor("[-] Unable to get IWbemClassObject's field. Error code = " + to_string(hr), 1);
+        exit(1);
+    }
+
+    auto rtn = make_shared<VariantType>();
+    if (vRet.vt == VT_BSTR) {
+        rtn->value.bstrVal = SysAllocString(vRet.bstrVal);
+        rtn->type = VariantType::VT_BSTR;
+    } else if (vRet.vt == VT_I4) {
+        rtn->value.lVal = vRet.lVal;
+        rtn->type = VariantType::VT_I4;
+    } else if (vRet.vt == VT_DISPATCH) {
+        rtn->value.pdispVal = vRet.pdispVal;
+        rtn->type = VariantType::VT_DISPATCH;
+    } else if (vRet.vt == VT_I2) {
+        rtn->value.iVal = vRet.iVal;
+        rtn->type = VariantType::VT_I2;
+    } else if (vRet.vt == VT_NULL) {
+        rtn->type = VariantType::VT_NULL;
+    } else if (vRet.vt == VT_BOOL) {
+        rtn->value.boolVal = vRet.boolVal;
+        rtn->type = VariantType::VT_BOOL;
+    } else {
+        printWithColor("[-] Unexpected variant type. Error code = " + to_string(vRet.vt), 1);
+        VariantClear(&vRet);
+        exit(1);
+    }
+    VariantClear(&vRet);
+    return rtn;
+}
+
+// Resets NIC (Network Interface Card)
+void resetNIC(IWbemServices* pSvc, const wstring& deviceId) {
+    wstring query = L"SELECT * FROM Win32_NetworkAdapterConfiguration WHERE SettingID = \"" + deviceId + L"\"";
+    _bstr_t langArg(L"WQL");
+    _bstr_t queryArg(query.c_str());
+
+    IEnumWbemClassObject* pEnum = nullptr;
+    HRESULT hr = pSvc->ExecQuery(langArg, queryArg, WBEM_FLAG_FORWARD_ONLY, nullptr, &pEnum);
+
+    if (FAILED(hr)) {
+        printWithColor("[-] Unable to query network adapter configurations. Error code = " + to_string(hr), 1);
+        exit(1);
+    }
+
+    IWbemClassObject* obj = nullptr;
+    ULONG numElm = 0;
+    hr = pEnum->Next(WBEM_INFINITE, 1, &obj, &numElm);
+
+    if (SUCCEEDED(hr) && obj != nullptr) {
+        auto pEnable = getIWbemClassObjectField(obj, L"Enable");
+        if (pEnable->type == VariantType::VT_I4 && pEnable->value.lVal == 0) {
+            printWithColor("The adapter is already enabled. Nothing to do.", 2);
+        } else {
+            printWithColor("[!] Enabling the adapter...", 3);
+        }
+
+        auto pMethod = getIWbemClassObjectField(obj, L"Enable");
+        if (pMethod->type == VariantType::VT_DISPATCH) {
+            DISPPARAMS dp = { nullptr, nullptr, 0, 0 };
+            VARIANT vResult;
+            VariantInit(&vResult);
+            hr = pMethod->value.pdispVal->Invoke(0, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &dp, &vResult, nullptr, nullptr);
+            if (FAILED(hr)) {
+                printWithColor("[-] Unable to invoke the method. Error code = " + to_string(hr), 1);
+                exit(1);
+            }
+            printWithColor("[+] Network adapter has been successfully enabled.", 2);
+            VariantClear(&vResult);
+        } else {
+            printWithColor("[-] Unexpected variant type for method call.", 1);
+            exit(1);
+        }
+        obj->Release();
+    } else {
+        printWithColor("[-] No network adapter found with SettingID \"" + convertBSTRToString(deviceId.c_str()) + "\".", 1);
+    }
+    pEnum->Release();
+}
+
+// Main function to execute the operations
 int main(int argc, char* argv[]) {
-    if (argc != 5) {
-        showUsage();
+    string action, value;
+
+    // Parse command-line arguments
+    if (!parseArguments(argc, argv, action, value)) {
+        printUsage(argv[0]);
         return 1;
     }
 
-    string interface;
-    string mac;
+    if (action == "-r") {
+        IWbemLocator* pLoc = nullptr;
+        IWbemServices* pSvc = nullptr;
+        setupWmiApi(&pLoc, &pSvc);
+        wstring deviceId = getDeviceId(pLoc, pSvc, value);
+        resetNIC(pSvc, deviceId);
+        pSvc->Release();
+        pLoc->Release();
+        CoUninitialize();
 
-    for (int i = 1; i < argc; ++i) {
-        string arg = argv[i];
-        if (arg == "-i" && i + 1 < argc) {
-            interface = argv[++i];
-        } else if (arg == "-m" && i + 1 < argc) {
-            mac = argv[++i];
-        } else {
-            showUsage();
+        printWithColor("[+] Operation completed successfully.", 2);
+    } else if (action == "-s") {
+        if (!validAddress(value)) {
+            printWithColor("[-] Invalid MAC address format.", 1);
+            printUsage(argv[0]);
             return 1;
         }
+        printWithColor("[+] Setting MAC address not implemented for Windows in this example.", 3);
     }
-
-    if (interface.empty() || mac.empty()) {
-        showUsage();
-        return 1;
-    }
-
-    #if defined(_WIN32) || defined(_WIN64)
-    macChangerWindows(interface, mac);
-    string currMAC = getCurrMAC(interface);
-
-    if (currMAC == mac) {
-        cout << RED << "[!] MAC has not changed: " << currMAC << RESET << endl;
-    } else {
-        cout << GREEN << "[+] New MAC-Address is: " << currMAC << RESET << endl;
-    }
-    #elif defined(__unix__) || defined(__APPLE__)
-    macChangerLinuxMac(interface, mac);
-    string currMAC = getCurrMAC(interface);
-
-    if (currMAC == mac) {
-        cout << RED << "[!] MAC has not changed: " << currMAC << RESET << endl;
-    } else {
-        cout << GREEN << "[+] New MAC-Address is: " << currMAC << RESET << endl;
-    }
-    #else
-    cerr << RED << "[!] Unsupported Operating System" << RESET << endl;
-    return 1;
-    #endif
 
     return 0;
 }
