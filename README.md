@@ -1,121 +1,111 @@
-# MAC Changer
+# MAC Spoofer
 
-This repository provides tools to change or reset MAC addresses on different operating systems: Windows, Linux, and macOS. The tools are implemented in C++ and each supports a set of functionalities tailored to their respective platforms.
+![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
-## Files
+## Overview
 
-### 1. `WIN-MAC-Changer.cpp`
+The **MAC Spoofer** is a cross-platform utility designed to change the MAC address of your network interfaces on Linux, macOS, and Windows systems. This tool is particularly useful for privacy-conscious users who want to obscure their device's identity on a network or for testing purposes in network security.
 
-This file contains a Windows-specific MAC address changer implemented using WMI (Windows Management Instrumentation). It allows you to:
+## Features
 
-- Reset a network interface.
-- (The functionality to set a MAC address is not implemented in this example.)
+- **Cross-Platform Support**: Works on Linux, macOS, and Windows.
+- **Easy to Use**: Simple command-line interface for setting and resetting MAC addresses.
+- **Root Privileges Check**: Ensures the script is run with the necessary permissions.
+- **Error Handling**: Provides clear error messages for common issues.
 
-**Usage:**
+## Table of Contents
 
-```bash
-WIN-MAC-Changer.exe -r <interface_name>
-```
+- [Installation](#installation)
+- [Usage](#usage)
+- [Supported Platforms](#supported-platforms)
+- [Requirements](#requirements)
+- [License](#license)
+- [Contributing](#contributing)
+- [Contact](#contact)
 
-- `-r <interface_name>`: Reset the network interface specified by `<interface_name>`
+## Installation
 
-**Example:**
-
-```bash
-WIN-MAC-Changer.exe -r "Ethernet"
-```
-
-### 2. `LIN-MAC-Changer.cpp`
-
-This file contains a Linux-specific MAC address changer that utilizes system commands. It provides functionality to:
-
-- Reset a network interface.
-- Set a new MAC address for a network interface.
-
-**Usage:**
-
-```bash
-LIN-MAC-Changer -r <interface_name>
-LIN-MAC-Changer -s <interface_name> <mac_address>
-```
-
-- `-r <interface_name>`: Reset the network interface specified by `<interface_name>`
-- `-s <interface_name> <mac_address>`: Set a new MAC address for `<interface_name>`
-
-**Example:**
-
-```bash
-LIN-MAC-Changer -r eth0
-LIN-MAC-Changer -s eth0 00:11:22:33:44:55
-```
-
-### 3. `MacOS-MAC-Changer.cpp`
-
-This file is for macOS and provides tools to:
-
-- Reset a network interface.
-- Set a new MAC address.
-
-**Usage:**
-
-```bash
-MacOS-MAC-Changer -r <interface_name>
-MacOS-MAC-Changer -s <mac_address>
-```
-
-- `-r <interface_name>`: Reset the network interface specified by `<interface_name>`
-- `-s <mac_address>`: Set a new MAC address
-
-**Example:**
-
-```bash
-MacOS-MAC-Changer -r en0
-MacOS-MAC-Changer -s 00:11:22:33:44:55
-```
-
-## Building
-
-To build these tools, you need to have a C++ compiler and the respective platform's development tools installed.
-
-### For Windows:
-
-1. Open the Developer Command Prompt for Visual Studio.
-2. Navigate to the directory containing `WIN-MAC-Changer.cpp`.
-3. Compile using:
-
+1. **Clone the repository**:
    ```bash
-   cl WIN-MAC-Changer.cpp /link /out:WIN-MAC-Changer.exe
+   git clone https://github.com/TheLeopard65/MAC-Spoofer.git
+   cd MAC-Spoofer
    ```
 
-### For Linux:
-
-1. Open a terminal.
-2. Navigate to the directory containing `LIN-MAC-Changer.cpp`.
-3. Compile using:
-
+2. **Compile the source code**:
+   Run the `compiler.sh` script to compile the appropriate version for your operating system:
    ```bash
-   g++ LIN-MAC-Changer.cpp -o LIN-MAC-Changer
+   sudo bash compiler.sh
    ```
 
-### For macOS:
+## Usage
 
-1. Open a terminal.
-2. Navigate to the directory containing `MacOS-MAC-Changer.cpp`.
-3. Compile using:
+The MAC Spoofer can be used with the following commands:
 
-   ```bash
-   g++ MacOS-MAC-Changer.cpp -o MacOS-MAC-Changer
-   ```
+### Set a New MAC Address
 
-## Notes
+```bash
+./mac_spoofer_<os> -s <interface_name> <mac_address>
+```
 
-- **Permissions**: Changing MAC addresses generally requires administrative privileges. Ensure you run the tools with sufficient permissions.
-- **Error Handling**: Error handling is basic in these examples. For production use, consider enhancing error checking and handling.
+### Reset the Network Interface
 
-## Contributing
+```bash
+./mac_spoofer_<os> -r <interface_name>
+```
 
-Feel free to fork the repository and submit pull requests with improvements or additional features. If you encounter any issues, please open an issue in the repository.
+### Example
+
+To set a new MAC address on a Linux system:
+```bash
+sudo ./mac_spoofer_linux -s eth0 00:11:22:33:44:55
+```
+
+To reset the network interface:
+```bash
+sudo ./mac_spoofer_linux -r eth0
+```
+
+### Command-Line Options
+
+- `-s <interface_name> <mac_address>`: Set a new MAC address for the specified interface.
+- `-r <interface_name>`: Reset the specified network interface.
+
+## Supported Platforms
+
+- **Linux**: Compiled with `g++`.
+- **macOS**: Compiled with `g++`.
+- **Windows**: Compiled with Visual Studio's Developer Command Prompt.
+
+## Requirements
+
+Before compiling, ensure you have the following installed:
+
+- **Linux**:
+  - `build-essential`
+  - `g++`
+  - `net-tools`
+  - `iproute2`
+
+- **macOS**:
+  - Xcode Command Line Tools
+
+- **Windows**:
+  - Visual Studio with C++ development tools
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions are welcome! If you have suggestions for improvements or new features, please open an issue or submit a pull request.
+
+1. Fork the repository.
+2. Create a new branch (`git checkout -b feature-branch`).
+3. Make your changes and commit them (`git commit -m 'Add new feature'`).
+4. Push to the branch (`git push origin feature-branch`).
+5. Open a pull request.
+
+---
+
+Thank you for using MAC Spoofer! Happy spoofing!
